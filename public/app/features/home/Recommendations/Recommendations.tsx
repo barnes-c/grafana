@@ -15,13 +15,13 @@ import { AccessControlAction } from 'app/types/accessControl';
 import RecommendationCard from './RecommendationCard';
 import RecommendationExisting from './RecommendationExisting';
 import RecommendationPill from './RecommendationPill';
+import { buildInviteTeamItem, fetchOrgUserCount } from './inviteTeam';
 import { KUBERNETES_APP_ID } from './kubernetesData';
 
 const HOME_RECOMMENDATIONS_COLLAPSED_LOCAL_STORAGE_KEY = 'grafana.home.recommendations.collapsed';
 
 export interface RecommendationItem {
   id: string; // stable telemetry id (recommendation_id)
-  pluginId: string; // app plugin id — drives the CTA href AND the enabled-filter
   title: string;
   icon: IconName;
   color: string | ((theme: GrafanaTheme2) => string);
@@ -31,11 +31,13 @@ export interface RecommendationItem {
   href: string;
 }
 
-// Curated next steps after Kubernetes Monitoring. Built at render time (never at module load) so
-// `t` resolves after i18n init and `locationUtil.assureBaseUrl` sees config.appSubUrl. hrefs point
-// at the plugin page where each app can be enabled, so the section must drop entries whose plugin
-// is already enabled and hide entirely from users who cannot manage plugins.
-function getRecommendations(): RecommendationItem[] {
+// Curated app entries also carry the plugin id that drives the CTA href and the enabled-filter.
+interface PluginRecommendationItem extends RecommendationItem {
+  pluginId: string;
+}
+
+// Build curated Kubernetes next steps at render time so i18n and appSubUrl are current.
+function getRecommendations(): PluginRecommendationItem[] {
   return [
     {
       id: 'hosted-traces',
@@ -98,10 +100,7 @@ function getRecommendations(): RecommendationItem[] {
 
 type PluginCtaState = 'enabled' | 'disabled' | 'not-installed' | 'unknown';
 
-// What acting on a recommendation's CTA would mean for this plugin: enabling a disabled app is a
-// settings write; a not-installed app is an install journey. 404 (wrapped as `cause`, like
-// usePluginSettings unwraps it) means not installed; any other failure is 'unknown'. Never
-// rejects — every failure path resolves to a state.
+// Maps CTA outcomes to permissions; every failure resolves to a state.
 async function getPluginCtaState(pluginId: string): Promise<PluginCtaState> {
   try {
     const settings = await getPluginSettings(pluginId);
@@ -115,12 +114,7 @@ async function getPluginCtaState(pluginId: string): Promise<PluginCtaState> {
   }
 }
 
-/**
- * Self-gates to null unless Kubernetes Monitoring is installed, the user holds at least one plugin
- * capability (install or settings write), and at least one recommended app survives per-card gating
- * — the recommendations are pitched as next steps after Kubernetes Monitoring, so they make no sense
- * without it.
- */
+// Shows post-Kubernetes next steps to users with plugin capability; an available invite keeps the section visible.
 export default function Recommendations() {
   const { installed, loading: bridgeLoading } = usePluginBridge(KUBERNETES_APP_ID);
 
@@ -130,18 +124,19 @@ export default function Recommendations() {
     return new Map(ids.map((id, i): [string, PluginCtaState] => [id, states[i]]));
   }, []);
 
+  const { value: orgUserCount, loading: countLoading } = useAsync(fetchOrgUserCount, []);
+
   const legacyAdmin = contextSrv.hasRole('Admin') || contextSrv.hasRole('ServerAdmin');
   const canInstall = contextSrv.hasPermission(AccessControlAction.PluginsInstall) || legacyAdmin;
   const canWrite = contextSrv.hasPermission(AccessControlAction.PluginsWrite) || legacyAdmin;
 
   // Hide (not skeleton) during load so the homepage never flashes a section that then vanishes.
-  if (bridgeLoading || statesLoading || !installed || (!canInstall && !canWrite)) {
+  if (bridgeLoading || statesLoading || countLoading || !installed || (!canInstall && !canWrite)) {
     return null;
   }
 
-  // 'unknown'/undefined (settings lookup failed) keeps the card rather than hiding the section —
-  // the early return above already guaranteed the user holds at least one plugin capability.
-  const recommendations = getRecommendations().filter((r) => {
+  // Unknown settings outcomes stay visible because the capability gate has already passed.
+  const pluginRecommendations = getRecommendations().filter((r) => {
     switch (ctaStates?.get(r.pluginId)) {
       case 'enabled':
         return false; // already running — never recommend
@@ -153,9 +148,15 @@ export default function Recommendations() {
         return true;
     }
   });
-  // if (recommendations.length === 0) {
-  //   return null;
-  // }
+
+  // The invite fallback is always last and is omitted when the user cannot invite.
+  const inviteItem = buildInviteTeamItem(orgUserCount ?? null);
+  const recommendations = inviteItem ? [...pluginRecommendations, inviteItem] : pluginRecommendations;
+
+  // Nothing recommendable and no invite path (user cannot add org users) — hide the section.
+  if (recommendations.length === 0) {
+    return null;
+  }
 
   return <RecommendationsView recommendations={recommendations} />;
 }
@@ -167,8 +168,7 @@ function RecommendationsView({ recommendations }: { recommendations: Recommendat
   const [index, setIndex] = useState(0);
   const [paused, setPaused] = useState(() => window.matchMedia('(prefers-reduced-motion: reduce)').matches);
 
-  // Clamp on the render itself, not via useEffect: if the list shrinks (an app gets enabled) while
-  // `index` is past the new end, reading recommendations[index] would be undefined before an effect fires.
+  // Clamp during render so a shrinking list cannot select an undefined entry.
   const safeIndex = Math.min(index, recommendations.length - 1);
 
   useEffect(() => {
@@ -425,8 +425,7 @@ const getStyles = (theme: GrafanaTheme2) => ({
   }),
   inner: css({
     display: 'flex',
-    // Fill .outer so each slide stretches to the card cell and the card's
-    // space-between can pin its CTA to the bottom, matching the Existing card.
+    // Fill the card cell so its CTA stays bottom-aligned with the existing card.
     height: '100%',
 
     [theme.transitions.handleMotion('no-preference')]: {
