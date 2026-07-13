@@ -81,6 +81,25 @@ describe('RecommendationExisting', () => {
     expect(screen.getByRole('link', { name: /Open K8s app/ })).toHaveAttribute('href', '/a/grafana-k8s-app/home');
   });
 
+  it('ceils fractional counts so partial numbers never render', async () => {
+    mockFetchOverview.mockResolvedValue({
+      clusters: 28.807541863863765,
+      pods: 246.2,
+      alertsFiring: 2.2,
+      unhealthyPods: 0,
+      restarts1h: 0,
+      notReadyNodes: 0,
+    });
+
+    render(<RecommendationExisting />);
+
+    expect(await screen.findByText('29 clusters')).toBeInTheDocument();
+    expect(screen.getByText('247 pods')).toBeInTheDocument();
+    // alertsFiring 2.2 gates the alert strip in (raw > 0) and displays ceiled.
+    expect(screen.getByText('3 alerts firing')).toBeInTheDocument();
+    expect(screen.queryByText(/28\.8/)).not.toBeInTheDocument();
+  });
+
   it('renders the CPU sparkline caption when the series resolves', async () => {
     const frame = createDataFrame({
       refId: 'cpu',

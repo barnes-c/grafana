@@ -136,14 +136,15 @@ function buildKubernetesItem(
   return {
     title: t('home.recommendations.kubernetes.title', 'Kubernetes Monitoring'),
     icon: 'kubernetes',
+    // Counts are count()-derived and integral in theory; Math.ceil guards the display against a datasource returning fractional frames.
     stats: {
       primary: t('home.recommendations.kubernetes.clusters', '', {
-        count: overview.clusters,
+        count: Math.ceil(overview.clusters),
         defaultValue_one: '{{count}} cluster',
         defaultValue_other: '{{count}} clusters',
       }),
       secondary: t('home.recommendations.kubernetes.pods', '', {
-        count: overview.pods,
+        count: Math.ceil(overview.pods),
         defaultValue_one: '{{count}} pod',
         defaultValue_other: '{{count}} pods',
       }),
@@ -161,7 +162,7 @@ function buildKubernetesItem(
           primary:
             alertsFiring > 0
               ? t('home.recommendations.kubernetes.alerts-firing', '', {
-                  count: alertsFiring,
+                  count: Math.ceil(alertsFiring),
                   defaultValue_one: '{{count}} alert firing',
                   defaultValue_other: '{{count}} alerts firing',
                 })
