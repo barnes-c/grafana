@@ -9,6 +9,7 @@ import { AccessControlAction } from 'app/types/accessControl';
 
 import Recommendations from './Recommendations';
 import { fetchOrgUserCount } from './inviteTeam';
+import { fetchKubernetesOverview } from './kubernetesData';
 
 jest.mock('@grafana/runtime/unstable', () => ({
   ...jest.requireActual('@grafana/runtime/unstable'),
@@ -248,6 +249,21 @@ describe('Recommendations', () => {
     expect(screen.getByRole('button', { name: 'Hide' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Previous' })).toBeInTheDocument();
+  });
+
+  it('does not refetch the existing-solution data when collapsed and expanded', async () => {
+    const mockFetchOverview = jest.mocked(fetchKubernetesOverview);
+    mockFetchOverview.mockClear();
+    const { user } = render(<Recommendations />);
+
+    await screen.findByRole('button', { name: 'Next' });
+    expect(mockFetchOverview).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: 'Hide' }));
+    await user.click(screen.getByRole('button', { name: 'Show' }));
+
+    expect(screen.getByRole('button', { name: 'Next' })).toBeInTheDocument();
+    expect(mockFetchOverview).toHaveBeenCalledTimes(1);
   });
 
   it('loads the collapsed state from local storage', async () => {
