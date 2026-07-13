@@ -46,7 +46,7 @@ describe('RecommendationExisting', () => {
   it('opens the dropdown and switches the selected solution', async () => {
     const { user } = render(<RecommendationExisting />);
 
-    const trigger = screen.getByRole('button');
+    const trigger = await screen.findByRole('button');
     const initialLabel = screen.getByRole('heading').textContent?.trim() ?? '';
     expect(initialLabel).not.toBe('');
 
@@ -66,6 +66,37 @@ describe('RecommendationExisting', () => {
 
     expect(screen.getByRole('heading', { name: nextLabel })).toBeInTheDocument();
     expect(screen.queryByRole('heading', { name: initialLabel })).not.toBeInTheDocument();
+  });
+
+  it('shows a skeleton instead of the stubs while the lookups are pending', () => {
+    // Both fetches pending — no async state updates, so synchronous assertions are act-safe.
+    const pending = Promise.race([]);
+    mockFetchOverview.mockReturnValue(pending);
+    mockFetchCpuSeries.mockReturnValue(pending);
+
+    render(<RecommendationExisting />);
+
+    expect(screen.getByTestId('recommendation-existing-skeleton')).toBeInTheDocument();
+    expect(screen.queryByRole('heading')).not.toBeInTheDocument();
+  });
+
+  it('shows the Kubernetes entry while the CPU series loads', async () => {
+    mockFetchCpuSeries.mockReturnValue(Promise.race([]));
+
+    render(<RecommendationExisting />);
+
+    expect(await screen.findByRole('heading', { name: 'Kubernetes Monitoring' })).toBeInTheDocument();
+    expect(screen.queryByTestId('recommendation-existing-skeleton')).not.toBeInTheDocument();
+    expect(screen.queryByText('Cluster CPU · last 24h')).not.toBeInTheDocument();
+  });
+
+  it('resolves the skeleton straight to the Kubernetes entry without flashing a stub', async () => {
+    render(<RecommendationExisting />);
+
+    expect(screen.getByTestId('recommendation-existing-skeleton')).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Kubernetes Monitoring' })).toBeInTheDocument();
+    expect(screen.queryByTestId('recommendation-existing-skeleton')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Hosted Metrics' })).not.toBeInTheDocument();
   });
 
   it('shows the Kubernetes entry with live stats once the overview resolves', async () => {
@@ -156,7 +187,7 @@ describe('RecommendationExisting', () => {
 
     const { user } = render(<RecommendationExisting />);
 
-    const trigger = screen.getByRole('button');
+    const trigger = await screen.findByRole('button');
     await user.click(trigger);
 
     expect(await screen.findByRole('menu')).toBeInTheDocument();

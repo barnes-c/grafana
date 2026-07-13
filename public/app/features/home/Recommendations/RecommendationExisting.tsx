@@ -1,5 +1,6 @@
 import { css, cx } from '@emotion/css';
 import { useState } from 'react';
+import Skeleton from 'react-loading-skeleton';
 import { useAsync } from 'react-use';
 
 import { type FieldSparkline, type IconName, type GrafanaTheme2, type PluginMeta, locationUtil } from '@grafana/data';
@@ -179,16 +180,21 @@ function buildKubernetesItem(
 
 export default function RecommendationExisting() {
   const styles = useStyles2(getStyles);
-  const { settings } = usePluginBridge(KUBERNETES_APP_ID);
+  const { settings, loading: settingsLoading } = usePluginBridge(KUBERNETES_APP_ID);
   // Resolved from Prometheus (kube-state-metrics), not a plugin REST endpoint — the k8s app has no
-  // summary API. While loading or on error the entry is simply omitted and the stubs remain.
-  const { value: overview } = useAsync(fetchKubernetesOverview, []);
-  // Fetched separately so a missing cAdvisor metric only costs the chart, never the whole entry.
+  // summary API. While settings and the overview load the card shows a skeleton; on error or no data the
+  // entry is omitted and the stubs remain.
+  const { value: overview, loading: overviewLoading } = useAsync(fetchKubernetesOverview, []);
+  // Fetched separately so a missing or slow cAdvisor metric only costs the chart, never the whole entry.
   const { value: cpuSeries } = useAsync(fetchClusterCpuSeries, []);
 
   // Track selection by title so it survives the Kubernetes item appearing once its data resolves;
   // storing the item object would go stale when the list is rebuilt.
   const [selectedTitle, setSelectedTitle] = useState<string>();
+
+  if (settingsLoading || overviewLoading) {
+    return <RecommendationExistingSkeleton />;
+  }
 
   const kubernetesItem =
     overview && overview.clusters > 0 ? buildKubernetesItem(overview, cpuSeries ?? null, settings) : null;
@@ -313,6 +319,37 @@ export default function RecommendationExisting() {
         >
           {selected.action}
         </LinkButton>
+      </Stack>
+    </Stack>
+  );
+}
+
+// Mirrors the card body (dropdown pill, icon + title, stats, CTA) while the Kubernetes lookups
+// load, so the first paint never shows a solution that a resolving fetch would replace.
+function RecommendationExistingSkeleton() {
+  return (
+    <Stack
+      direction="column"
+      justifyContent="space-between"
+      gap={2}
+      flex={1}
+      data-testid="recommendation-existing-skeleton"
+    >
+      <Stack direction="column" gap={1.5}>
+        <Skeleton width={240} height={30} />
+        <Stack direction="row" alignItems="center" gap={1.5}>
+          <Skeleton width={44} height={44} />
+          <Skeleton width={200} height={24} />
+        </Stack>
+      </Stack>
+
+      <Stack direction="column" gap={0}>
+        <Skeleton width={140} height={35} />
+        <Skeleton width={100} height={20} />
+      </Stack>
+
+      <Stack direction="row" alignItems="center">
+        <Skeleton width={170} height={32} />
       </Stack>
     </Stack>
   );

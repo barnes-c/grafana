@@ -123,17 +123,13 @@ async function getPluginCtaState(pluginId: string): Promise<PluginCtaState> {
  */
 export default function Recommendations() {
   const { installed, loading: bridgeLoading } = usePluginBridge(KUBERNETES_APP_ID);
-  // Classify every recommended app once per mount: enabled apps are dropped, and the remaining
-  // cards are gated on the permission their CTA actually needs (install vs settings write).
+
   const { value: ctaStates, loading: statesLoading } = useAsync(async () => {
     const ids = getRecommendations().map((r) => r.pluginId);
-    // getPluginCtaState never rejects (all failures resolve to 'unknown'), so Promise.all cannot
-    // abort the batch; Promise.allSettled would only add dead branches.
     const states = await Promise.all(ids.map(getPluginCtaState));
     return new Map(ids.map((id, i): [string, PluginCtaState] => [id, states[i]]));
-  }, []); // recommended plugin ids are static
+  }, []);
 
-  // The /plugins/:id route also admits the legacy Admin/ServerAdmin roles — they pass every CTA.
   const legacyAdmin = contextSrv.hasRole('Admin') || contextSrv.hasRole('ServerAdmin');
   const canInstall = contextSrv.hasPermission(AccessControlAction.PluginsInstall) || legacyAdmin;
   const canWrite = contextSrv.hasPermission(AccessControlAction.PluginsWrite) || legacyAdmin;
@@ -157,9 +153,9 @@ export default function Recommendations() {
         return true;
     }
   });
-  if (recommendations.length === 0) {
-    return null;
-  }
+  // if (recommendations.length === 0) {
+  //   return null;
+  // }
 
   return <RecommendationsView recommendations={recommendations} />;
 }
