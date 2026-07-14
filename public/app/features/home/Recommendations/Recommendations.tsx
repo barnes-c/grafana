@@ -4,17 +4,18 @@ import { useAsync } from 'react-use';
 
 import { type GrafanaTheme2, type IconName, locationUtil } from '@grafana/data';
 import { t, Trans } from '@grafana/i18n';
-import { isFetchError } from '@grafana/runtime';
-import { getPluginSettings } from '@grafana/runtime/unstable';
+import { config, getBackendSrv } from '@grafana/runtime';
 import { Badge, Button, Grid, Icon, Stack, Text, useStyles2 } from '@grafana/ui';
 import { useStoredBoolean } from 'app/core/hooks/useStoredBoolean';
 import { contextSrv } from 'app/core/services/context_srv';
+import { accessControlQueryParam } from 'app/core/utils/accessControl';
 import { usePluginBridge } from 'app/features/alerting/unified/hooks/usePluginBridge';
+import { type LocalPlugin } from 'app/features/plugins/admin/types';
 import { AccessControlAction } from 'app/types/accessControl';
 
-import RecommendationCard from './RecommendationCard';
-import RecommendationExisting from './RecommendationExisting';
-import RecommendationPill from './RecommendationPill';
+import { RecommendationCard } from './RecommendationCard';
+import { RecommendationExisting } from './RecommendationExisting';
+import { RecommendationPill } from './RecommendationPill';
 import { buildInviteTeamItem, fetchOrgUserCount } from './inviteTeam';
 import { KUBERNETES_APP_ID } from './kubernetesData';
 
@@ -31,14 +32,12 @@ export interface RecommendationItem {
   href: string;
 }
 
-// Curated app entries also carry the plugin id that drives the CTA href and the enabled-filter.
 interface PluginRecommendationItem extends RecommendationItem {
   pluginId: string;
 }
 
-// Build curated Kubernetes next steps at render time so i18n and appSubUrl are current.
 function getRecommendations(): PluginRecommendationItem[] {
-  return [
+  const recommendationDefinitions: Array<Omit<PluginRecommendationItem, 'href'>> = [
     {
       id: 'hosted-traces',
       pluginId: 'grafana-exploretraces-app',
@@ -51,7 +50,6 @@ function getRecommendations(): PluginRecommendationItem[] {
         'Add distributed tracing to see how requests flow between services and where they slow down.'
       ),
       action: t('home.recommendations.hosted-traces.action', 'Enable Hosted Traces'),
-      href: locationUtil.assureBaseUrl('/plugins/grafana-exploretraces-app/'),
     },
     {
       id: 'synthetic-monitoring',
@@ -65,7 +63,6 @@ function getRecommendations(): PluginRecommendationItem[] {
         'Probe your endpoints from 20+ global locations before your users notice.'
       ),
       action: t('home.recommendations.synthetic-monitoring.action', 'Add Synthetic Monitoring'),
-      href: locationUtil.assureBaseUrl('/plugins/grafana-synthetic-monitoring-app/'),
     },
     {
       id: 'application-observability',
@@ -79,7 +76,6 @@ function getRecommendations(): PluginRecommendationItem[] {
         'Turn OpenTelemetry data into RED metrics, service maps, and correlated traces automatically.'
       ),
       action: t('home.recommendations.application-observability.action', 'Enable Application Observability'),
-      href: locationUtil.assureBaseUrl('/plugins/grafana-app-observability-app/'),
     },
     {
       id: 'frontend-observability',
@@ -93,67 +89,59 @@ function getRecommendations(): PluginRecommendationItem[] {
         'Capture Core Web Vitals and errors from the browser and tie them back to backend traces.'
       ),
       action: t('home.recommendations.frontend-observability.action', 'Enable Frontend Observability'),
-      href: locationUtil.assureBaseUrl('/plugins/grafana-kowalski-app/'),
     },
   ];
+
+  return recommendationDefinitions.map((recommendation) => ({
+    ...recommendation,
+    href: locationUtil.assureBaseUrl(`/plugins/${recommendation.pluginId}/`),
+  }));
 }
 
-type PluginCtaState = 'enabled' | 'disabled' | 'not-installed' | 'unknown';
+// Bypass getLocalPlugins(): it drops hidden plugins, which must still be classified here.
+async function fetchInstalledPlugins(): Promise<LocalPlugin[]> {
+  return getBackendSrv().get('/api/plugins', accessControlQueryParam({ embedded: 0 }));
+}
 
-// Maps CTA outcomes to permissions; every failure resolves to a state.
-async function getPluginCtaState(pluginId: string): Promise<PluginCtaState> {
-  try {
-    const settings = await getPluginSettings(pluginId);
-    return settings.enabled ? 'enabled' : 'disabled';
-  } catch (err) {
-    const cause = err instanceof Error ? err.cause : err;
-    if (isFetchError(cause) && cause.status === 404) {
-      return 'not-installed';
-    }
-    return 'unknown';
+export function Recommendations() {
+  const canInstall = contextSrv.hasPermission(AccessControlAction.PluginsInstall) && config.pluginAdminEnabled;
+  // Unscoped pre-gate only; each disabled card re-checks plugins:write scoped to its own plugin.
+  const canWriteSome = contextSrv.hasPermission(AccessControlAction.PluginsWrite);
+  if (!canInstall && !canWriteSome) {
+    return null;
   }
+  return <GatedRecommendations canInstall={canInstall} />;
 }
 
-// Shows post-Kubernetes next steps to users with plugin capability; an available invite keeps the section visible.
-export default function Recommendations() {
+function GatedRecommendations({ canInstall }: { canInstall: boolean }) {
   const { installed, loading: bridgeLoading } = usePluginBridge(KUBERNETES_APP_ID);
-
-  const { value: ctaStates, loading: statesLoading } = useAsync(async () => {
-    const ids = getRecommendations().map((r) => r.pluginId);
-    const states = await Promise.all(ids.map(getPluginCtaState));
-    return new Map(ids.map((id, i): [string, PluginCtaState] => [id, states[i]]));
-  }, []);
-
+  const { value: installedPlugins, loading: pluginsLoading } = useAsync(
+    async () => (installed ? fetchInstalledPlugins() : undefined),
+    [installed]
+  );
   const { value: orgUserCount, loading: countLoading } = useAsync(fetchOrgUserCount, []);
 
-  const legacyAdmin = contextSrv.hasRole('Admin') || contextSrv.hasRole('ServerAdmin');
-  const canInstall = contextSrv.hasPermission(AccessControlAction.PluginsInstall) || legacyAdmin;
-  const canWrite = contextSrv.hasPermission(AccessControlAction.PluginsWrite) || legacyAdmin;
-
-  // Hide (not skeleton) during load so the homepage never flashes a section that then vanishes.
-  if (bridgeLoading || statesLoading || countLoading || !installed || (!canInstall && !canWrite)) {
+  // An unavailable plugin list fails closed.
+  if (bridgeLoading || pluginsLoading || countLoading || !installed || !installedPlugins) {
     return null;
   }
 
-  // Unknown settings outcomes stay visible because the capability gate has already passed.
-  const pluginRecommendations = getRecommendations().filter((r) => {
-    switch (ctaStates?.get(r.pluginId)) {
-      case 'enabled':
-        return false; // already running — never recommend
-      case 'disabled':
-        return canWrite; // enabling = plugin settings update
-      case 'not-installed':
-        return canInstall; // install journey
-      default:
-        return true;
+  const pluginsById = new Map(installedPlugins.map((plugin) => [plugin.id, plugin]));
+  const pluginRecommendations = getRecommendations().filter((recommendation) => {
+    const plugin = pluginsById.get(recommendation.pluginId);
+    if (!plugin) {
+      // Unlistable plugins take the install-only path.
+      return canInstall;
     }
+    if (plugin.enabled) {
+      return false;
+    }
+    // plugins:write is scoped to this plugin.
+    return contextSrv.hasPermissionInMetadata(AccessControlAction.PluginsWrite, plugin);
   });
 
-  // The invite fallback is always last and is omitted when the user cannot invite.
   const inviteItem = buildInviteTeamItem(orgUserCount ?? null);
   const recommendations = inviteItem ? [...pluginRecommendations, inviteItem] : pluginRecommendations;
-
-  // Nothing recommendable and no invite path (user cannot add org users) — hide the section.
   if (recommendations.length === 0) {
     return null;
   }

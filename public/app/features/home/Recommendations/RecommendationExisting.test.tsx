@@ -3,7 +3,7 @@ import { render, screen } from 'test/test-utils';
 import { createDataFrame, FieldType, type PluginMeta } from '@grafana/data';
 import { usePluginBridge } from 'app/features/alerting/unified/hooks/usePluginBridge';
 
-import RecommendationExisting from './RecommendationExisting';
+import { RecommendationExisting } from './RecommendationExisting';
 import { fetchClusterCpuSeries, fetchKubernetesOverview, type KubernetesOverview } from './kubernetesData';
 import { readSeries } from './promQuery';
 

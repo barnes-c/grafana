@@ -178,7 +178,7 @@ function buildKubernetesItem(
   };
 }
 
-export default function RecommendationExisting() {
+export function RecommendationExisting() {
   const styles = useStyles2(getStyles);
   const { settings, loading: settingsLoading } = usePluginBridge(KUBERNETES_APP_ID);
   // Resolved from Prometheus (kube-state-metrics), not a plugin REST endpoint — the k8s app has no
